@@ -388,8 +388,31 @@ body {
       <div class="wait-label">Estimated days remaining</div>
       <div class="wait-days" id="hero-days">47 <span>days</span></div>
       <div class="wait-desc" id="hero-desc">Based on 1,243 similar F-1 cases in administrative processing</div>
-      <div class="wait-stage">
+      <div class="wait-stage" style="justify-content:space-between;align-items:center;">
         <div class="stage-pill"><div class="stage-dot"></div><span id="hero-stage">Administrative processing</span></div>
+        <button onclick="showUpdateStatus()" style="background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);color:white;font-family:'DM Sans',sans-serif;font-size:12px;padding:5px 12px;border-radius:20px;cursor:pointer;">Update status</button>
+      </div>
+    </div>
+
+    <!-- Update status panel -->
+    <div id="update-panel" style="display:none;" class="card fade-up">
+      <div class="card-title">Update your visa status</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;">Select your current stage and we'll update your timeline and notify the community.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <select id="update-stage" style="padding:10px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);background:white;outline:none;">
+          <option value="" disabled selected>Select your new stage</option>
+          <option value="0">I-20 issued by DSO</option>
+          <option value="1">DS-160 submitted</option>
+          <option value="2">SEVIS fee paid</option>
+          <option value="3">Visa interview completed</option>
+          <option value="4">Visa approved!</option>
+        </select>
+        <input type="number" id="update-days" placeholder="Total days waited so far" style="padding:10px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);font-family:'DM Sans',sans-serif;font-size:13px;color:var(--text);outline:none;"/>
+        <div style="display:flex;gap:8px;">
+          <button onclick="submitStatusUpdate()" style="flex:1;padding:11px;border-radius:var(--radius-sm);background:var(--blue);color:white;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:none;cursor:pointer;">Save update</button>
+          <button onclick="hideUpdateStatus()" style="padding:11px 16px;border-radius:var(--radius-sm);background:white;color:var(--text-muted);font-family:'DM Sans',sans-serif;font-size:13px;border:1px solid var(--border);cursor:pointer;">Cancel</button>
+        </div>
+        <p id="update-thanks" style="display:none;font-size:13px;color:var(--green);text-align:center;font-weight:500;">Status updated! Your timeline has been refreshed.</p>
       </div>
     </div>
 
@@ -639,6 +662,60 @@ async function submitWaitTime() {
     fetchRealAverage();
   } catch(e) {
     alert('Could not save. Please try again.');
+  }
+}
+
+function showUpdateStatus() {
+  document.getElementById('update-panel').style.display = 'block';
+  document.getElementById('update-panel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function hideUpdateStatus() {
+  document.getElementById('update-panel').style.display = 'none';
+}
+
+async function submitStatusUpdate() {
+  const stageVal = document.getElementById('update-stage').value;
+  const days = document.getElementById('update-days').value.trim();
+  if (stageVal === '' || !days) { alert('Please select a stage and enter days waited.'); return; }
+
+  const stage = parseInt(stageVal);
+  const stageNames = ['I-20 Issued','DS-160 Submitted','SEVIS Fee Paid','Interview Completed','Visa Approved'];
+  const isResolved = stage >= 4;
+
+  try {
+    await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/Wait%20Times`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${AIRTABLE_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        fields: {
+          Stage: stageNames[stage],
+          'Days Waited': parseInt(days),
+          Resolved: isResolved,
+          Country: userCountry || '',
+          'Submitted Date': new Date().toISOString().split('T')[0]
+        }
+      })
+    });
+
+    currentStage = stage;
+    document.getElementById('hero-stage').textContent = stageLabels[stage];
+    document.getElementById('hero-days').innerHTML = daysRemaining[stage] + ' <span>days</span>';
+    document.getElementById('update-thanks').style.display = 'block';
+    renderTimeline(stage);
+    fetchRealAverage();
+    fetchPersonalisedInsight();
+
+    setTimeout(() => {
+      hideUpdateStatus();
+      document.getElementById('update-thanks').style.display = 'none';
+    }, 2500);
+
+  } catch(e) {
+    alert('Could not save update. Please try again.');
   }
 }
 
