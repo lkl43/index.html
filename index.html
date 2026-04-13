@@ -360,6 +360,7 @@ body {
     <input type="text" id="inp-name" placeholder="Your name" autocomplete="off"/>
     <input type="email" id="inp-email" placeholder="Your email address" autocomplete="off"/>
     <input type="text" id="inp-case" placeholder="USCIS case number (e.g. MSC2490127843)" autocomplete="off"/>
+    <input type="text" id="inp-country" placeholder="Country of visa interview (e.g. India, Nigeria)" autocomplete="off"/>
     <select id="inp-stage">
       <option value="" disabled selected>Where are you in the process?</option>
       <option value="0">I-20 issued by DSO</option>
@@ -392,6 +393,13 @@ body {
       </div>
     </div>
 
+    <!-- Personalised insight -->
+    <div class="card fade-up" id="insight-card" style="border-left:3px solid var(--blue);border-radius:0 var(--radius) var(--radius) 0;">
+      <div class="card-title">Your personalised insight</div>
+      <p id="insight-text" style="font-size:14px;color:var(--text);line-height:1.7;">Analysing cases similar to yours...</p>
+      <div id="insight-stats" style="display:none;margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;"></div>
+    </div>
+
     <!-- Stats -->
     <div class="stats-row fade-up">
       <div class="stat-card">
@@ -414,6 +422,22 @@ body {
       <div class="timeline">
         <div class="tl-track"></div>
         <div id="tl-steps"></div>
+      </div>
+    </div>
+
+    <!-- Contribute data card -->
+    <div class="card fade-up" id="contribute-card">
+      <div class="card-title">Help the community</div>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">Share your wait time so others know what to expect. Takes 10 seconds and helps thousands of F-1 applicants.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <input type="number" id="contrib-days" placeholder="How many days have you waited so far?" style="padding:10px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;color:var(--text);"/>
+        <input type="text" id="contrib-country" placeholder="Country of interview (e.g. India, Nigeria, China)" style="padding:10px 14px;border-radius:var(--radius-sm);border:1px solid var(--border);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;color:var(--text);"/>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="contrib-resolved" style="width:16px;height:16px;"/>
+          <label for="contrib-resolved" style="font-size:13px;color:var(--text-muted);">My visa has been resolved</label>
+        </div>
+        <button onclick="submitWaitTime()" style="padding:11px;border-radius:var(--radius-sm);background:var(--blue);color:white;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;border:none;cursor:pointer;">Submit my data</button>
+        <p id="contrib-thanks" style="display:none;font-size:13px;color:var(--green);text-align:center;font-weight:500;">Thank you! Your data has been added.</p>
       </div>
     </div>
 
@@ -512,6 +536,8 @@ const stageLabels = [
 const daysRemaining = [120, 100, 90, 47, 10, 0];
 
 let userName = '';
+let currentStage = 0;
+let userCountry = '';
 
 function startApp() {
   const name = document.getElementById('inp-name').value.trim();
@@ -520,6 +546,8 @@ function startApp() {
   if (!name || stageVal === '') { alert('Please enter your name and select your current stage.'); return; }
   const stage = parseInt(stageVal);
   userName = name;
+  currentStage = stage;
+  userCountry = document.getElementById('inp-country').value.trim();
 
   document.getElementById('user-avatar').textContent = name[0].toUpperCase();
   document.getElementById('hero-days').innerHTML = daysRemaining[stage] + ' <span>days</span>';
@@ -540,6 +568,8 @@ function startApp() {
 
   const email = document.getElementById('inp-email') ? document.getElementById('inp-email').value.trim() : '';
   saveToAirtable(name, email, caseNum, stage);
+  fetchRealAverage();
+  fetchPersonalisedInsight();
 
   document.getElementById('landing').style.display = 'none';
   document.getElementById('app').style.display = 'flex';
@@ -575,6 +605,118 @@ function renderTimeline(activeStep) {
 function askChip(q) {
   document.getElementById('chat-input').value = q;
   sendMsg();
+}
+
+async function submitWaitTime() {
+  const days = document.getElementById('contrib-days').value.trim();
+  const country = document.getElementById('contrib-country').value.trim();
+  const resolved = document.getElementById('contrib-resolved').checked;
+  const stageNames = ['I-20 Issued','DS-160 Submitted','SEVIS Fee Paid','Interview Completed','Visa Approved'];
+
+  if (!days || !country) { alert('Please enter days waited and your country.'); return; }
+
+  try {
+    await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/Wait%20Times`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${AIRTABLE_TOKEN}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        fields: {
+          Stage: stageNames[currentStage] || 'Interview Completed',
+          'Days Waited': parseInt(days),
+          Resolved: resolved,
+          Country: country,
+          'Submitted Date': new Date().toISOString().split('T')[0]
+        }
+      })
+    });
+    document.getElementById('contrib-thanks').style.display = 'block';
+    document.getElementById('contrib-days').disabled = true;
+    document.getElementById('contrib-country').disabled = true;
+    document.getElementById('contrib-resolved').disabled = true;
+    fetchRealAverage();
+  } catch(e) {
+    alert('Could not save. Please try again.');
+  }
+}
+
+async function fetchPersonalisedInsight() {
+  const insightText = document.getElementById('insight-text');
+  const insightStats = document.getElementById('insight-stats');
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/Wait%20Times?maxRecords=200`, {
+      headers: { 'Authorization': `Bearer ${AIRTABLE_TOKEN}` }
+    });
+    const data = await res.json();
+    const all = data.records || [];
+
+    const countryMatch = userCountry
+      ? all.filter(r => r.fields['Country'] && r.fields['Country'].toLowerCase().includes(userCountry.toLowerCase()))
+      : [];
+
+    const pool = countryMatch.length >= 3 ? countryMatch : all;
+    const label = countryMatch.length >= 3 ? `from ${userCountry}` : 'across all countries';
+
+    const days = pool.map(r => r.fields['Days Waited']).filter(Boolean);
+    if (days.length === 0) {
+      insightText.textContent = `You're one of the first VisaTrack users ${userCountry ? 'from ' + userCountry : ''}! As more people join, your personalised estimate will get more accurate.`;
+      return;
+    }
+
+    const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+    const resolved = pool.filter(r => r.fields['Resolved']).length;
+    const resolvedPct = Math.round((resolved / pool.length) * 100);
+    const daysSince = currentStage >= 3 ? 38 : 0;
+    const remaining = Math.max(0, avg - daysSince);
+    const aheadPct = Math.round((days.filter(d => d <= daysSince).length / days.length) * 100);
+
+    insightText.innerHTML = `Based on <strong>${pool.length} applicants ${label}</strong>, the average wait is <strong>${avg} days</strong>. You're on day ${daysSince} — <strong>${aheadPct}% of similar applicants have already heard back</strong>. Most remaining cases resolve within <strong>${remaining} more days</strong>.`;
+
+    insightStats.style.display = 'flex';
+    insightStats.innerHTML = `
+      <div style="background:var(--blue-light);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;">
+        <div style="font-weight:500;color:var(--blue);font-size:16px;">${avg} days</div>
+        <div style="color:var(--text-muted);">Avg. wait ${label}</div>
+      </div>
+      <div style="background:var(--green-light);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;">
+        <div style="font-weight:500;color:var(--green);font-size:16px;">${resolvedPct}%</div>
+        <div style="color:var(--text-muted);">Resolved by day ${daysSince}</div>
+      </div>
+      <div style="background:var(--amber-light);border-radius:var(--radius-sm);padding:8px 12px;font-size:12px;">
+        <div style="font-weight:500;color:var(--amber);font-size:16px;">${pool.length}</div>
+        <div style="color:var(--text-muted);">Cases in your cohort</div>
+      </div>`;
+
+  } catch(e) {
+    insightText.textContent = 'Could not load personalised data. Please refresh to try again.';
+  }
+}
+
+async function fetchRealAverage() {
+  try {
+    const res = await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/Wait%20Times?maxRecords=100`, {
+      headers: { 'Authorization': `Bearer ${AIRTABLE_TOKEN}` }
+    });
+    const data = await res.json();
+    const records = data.records || [];
+    if (records.length === 0) return;
+
+    const days = records.map(r => r.fields['Days Waited']).filter(Boolean);
+    const avg = Math.round(days.reduce((a, b) => a + b, 0) / days.length);
+    const remaining = Math.max(0, avg - (currentStage >= 3 ? 38 : 0));
+
+    document.getElementById('hero-days').innerHTML = `~${remaining} <span>days</span>`;
+    document.getElementById('hero-desc').textContent = `Based on ${records.length} real submissions from the VisaTrack community`;
+
+    const resolvedCount = records.filter(r => r.fields['Resolved']).length;
+    const resolvedPct = Math.round((resolvedCount / records.length) * 100);
+    document.querySelector('.stats-row .stat-card:nth-child(2) .stat-num').textContent = resolvedPct + '%';
+    document.querySelector('.stats-row .stat-card:nth-child(3) .stat-num').textContent = '~' + avg + ' days';
+  } catch(e) {
+    console.log('Could not fetch averages:', e);
+  }
 }
 
 async function sendMsg() {
